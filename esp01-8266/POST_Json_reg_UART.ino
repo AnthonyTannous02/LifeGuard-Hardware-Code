@@ -8,7 +8,6 @@
 ESP8266WiFiMulti WiFiMulti;
 
 
-
 char* waitForInput(const char* prompt, int maxSize, int timeoutMillis = 5000) {
     USE_SERIAL.println(prompt);
     USE_SERIAL.flush();
@@ -38,20 +37,72 @@ char* waitForInput(const char* prompt, int maxSize, int timeoutMillis = 5000) {
     return inputBuffer;
 }
 
+
 void freeInputBuffer(char* buffer) {
     delete[] buffer;
 }
 
+
 char* API_HOME;
+
+
+void postRequest(char* dataType, char* uartData) {
+  HTTPClient http;
+  int type = dataType[0] - 48;
+  char* endPoint;
+  switch(type){
+    case 1:
+      endPoint = "/acc";
+      break;
+    case 2:
+      endPoint = "/gps";
+      break;
+    case 3:
+      endPoint = "/oxi";
+      break;
+    case 4:
+      endPoint = "/prs";
+      break;
+    default:
+      endPoint = "";
+      break;
+  }
+  freeInputBuffer(dataType);
+
+  USE_SERIAL.println("Sending...");
+  
+  char* API = new char[strlen(API_HOME) + strlen(endPoint) + 1];
+  API[0] = '\0';
+  strcat(API, API_HOME);
+  strcat(API, endPoint);
+  http.begin(API);
+  freeInputBuffer(API);
+  http.addHeader("Content-Type", "application/json");
+  int httpResponseCode = http.POST(uartData);
+  USE_SERIAL.println(uartData);
+  freeInputBuffer(uartData);
+  if (httpResponseCode > 0) {
+      USE_SERIAL.printf("[HTTP] POST... code: %d\n", httpResponseCode);
+
+      if (httpResponseCode == HTTP_CODE_OK) {
+          USE_SERIAL.println(http.getString());
+      }
+  } else {
+      USE_SERIAL.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpResponseCode).c_str());
+  }
+  USE_SERIAL.flush();
+  http.end();
+}
+
 
 void setup() {
     USE_SERIAL.begin(115200);
     USE_SERIAL.println("Starting...");
     USE_SERIAL.flush();
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    int n = WiFi.scanNetworks();
+    WiFi.mode(WIFI_STA); // Config to Allow it to connect to WIFI APs
+    WiFi.disconnect(); // Disconnect Previously Connected Wifi in case of Change
+    int n = WiFi.scanNetworks(); // Debugging purpose Scan Networks
     USE_SERIAL.print(n);
     USE_SERIAL.println(" network(s) found:");
     for (int i = 0; i < n; i++)
@@ -59,41 +110,33 @@ void setup() {
       USE_SERIAL.print(WiFi.SSID(i) + ", ");
     }
     USE_SERIAL.println();
+    char* APNAME;
+    char* APAUTH;
+    do{
+      APNAME = waitForInput("APNAME", 100); // Wait for Rpi to Send the APNAME
+      APAUTH = waitForInput("APAUTH", 100); // Wait for Rpi to Send the APAUTH
+      WiFiMulti.addAP(APNAME, APAUTH);
+    }while(WiFiMulti.run() != WL_CONNECTED);
 
-    char* APNAME = waitForInput("APNAME", 100);
-    char* APAUTH = waitForInput("APAUTH", 100);
-    WiFiMulti.addAP(APNAME, APAUTH);
-    
+    freeInputBuffer(APNAME); // Delete Unused Data
+    freeInputBuffer(APAUTH); // Delete Unused Data
 
-    freeInputBuffer(APNAME);
-    freeInputBuffer(APAUTH);
-
-    API_HOME = waitForInput("API", 100);
+    API_HOME = waitForInput("API", 100); // Wait for Rpi to send the API URL
 }
+
 
 void loop() {
     if (WiFiMulti.run() == WL_CONNECTED) { 
-        // Read data from UART
-        char* uartData = waitForInput("MESSAGE", 2048); // You need to implement this function to read UART data
-        HTTPClient http;
-        USE_SERIAL.println("Sending...");
-        http.begin(API_HOME); // Change the URL to your server
-
-        http.addHeader("Content-Type", "application/json");
-        int httpResponseCode = http.POST(uartData);
-        USE_SERIAL.println(uartData);
-        freeInputBuffer(uartData);
-        if (httpResponseCode > 0) {
-            USE_SERIAL.printf("[HTTP] POST... code: %d\n", httpResponseCode);
-
-            if (httpResponseCode == HTTP_CODE_OK) {
-                USE_SERIAL.println(http.getString());
-            }
-        } else {
-            USE_SERIAL.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpResponseCode).c_str());
-        }
-        USE_SERIAL.flush();
-        http.end();
-        delay(100);
+        char* dataType = waitForInput("TYPE", 2); // Get the Data Type to be Sent
+        /*
+          dataType can be:
+          1 -> Accelerometer Data
+          2 -> GPS Data
+          3 -> Oximeter Data 
+        */
+        char* uartData = waitForInput("MESSAGE", 2048); // Send Confirmation that ESP is ready to receive Data
+        postRequest(dataType, uartData); // Send the request to the Server based on the Data Type
+        
+        delay(100); // To avoid Tight Looping
     }
 }
